@@ -136,11 +136,33 @@ def get_last():
 def keepalive():
     return "ok" if authorized() else "unauthorized but alive", 200
 
-@app.route("/p/<host>/<path:path>", methods=["GET","POST","PUT","DELETE"])
+@app.route("/p/<host>/", defaults={"path": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+@app.route("/p/<host>/<path:path>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 def subpage_proxy(host, path):
-    url = f"https://{host}/{path}"
-    resp = requests.request(method=request.method, url=url, params=request.args, data=request.get_data(), headers={k:v for k,v in request.headers if k.lower() != 'host'})
-    return Response(resp.content, status=resp.status_code)
+    base = f"https://{host}"
+    url = f"{base}/{path}" if path else f"{base}/"
+    forwarded_headers = {
+        key: value
+        for key, value in request.headers
+        if key.lower() not in {"host", "content-length", "connection"}
+    }
+    resp = requests.request(
+        method=request.method,
+        url=url,
+        params=request.args,
+        data=request.get_data(),
+        headers=forwarded_headers,
+        allow_redirects=False,
+        timeout=20,
+    )
+
+    excluded_headers = {"content-encoding", "transfer-encoding", "connection"}
+    response_headers = [
+        (key, value)
+        for key, value in resp.headers.items()
+        if key.lower() not in excluded_headers
+    ]
+    return Response(resp.content, status=resp.status_code, headers=response_headers)
 
 # --- SERVER RUNNER ---
 
