@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import time
 import hashlib
@@ -33,6 +34,18 @@ genai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 state = {"last_app": None}
 owot_clients = {}
+
+# --- SAFE PRINT UTILITY ---
+def safe_log(message: str):
+    """Safely logs to stderr if stdout is closed (common on headless hosts like Render)."""
+    try:
+        if not sys.stdout.closed:
+            print(message, flush=True)
+        else:
+            sys.stderr.write(message + "\n")
+            sys.stderr.flush()
+    except Exception:
+        pass
 
 # --- OWOT WEBSOCKET MANAGER ---
 class OWOTManager:
@@ -270,7 +283,7 @@ def run_flask():
 
 if __name__ == "__main__":
     # 1. Start Flask in the background
-    print("Starting Flask background thread on port 5000...", flush=True)
+    safe_log("Starting Flask background thread on port 5000...")
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
@@ -278,16 +291,16 @@ if __name__ == "__main__":
     time.sleep(0.5)
 
     # 2. Start MCP Server in stdio mode
-    print("Starting MCP Server (stdio mode)...", flush=True)
+    safe_log("Starting MCP Server (stdio mode)...")
     try:
         mcp.run(transport="stdio")
     except Exception as e:
-        print(f"MCP Server failed or was interrupted: {e}", flush=True)
+        safe_log(f"MCP Server closed or is unsupported in this environment: {e}")
 
     # 3. Prevent the main thread from exiting if the stdio stream terminates
-    print("MCP Server run-loop finished. Keeping main thread alive for Flask...", flush=True)
+    safe_log("MCP Server run-loop finished. Keeping main thread alive for Flask proxy routes...")
     try:
         while True:
-            time.sleep(1)
+            time.sleep(1000)
     except KeyboardInterrupt:
-        print("Stopping WebHub Server...", flush=True)
+        safe_log("Stopping WebHub Server...")
