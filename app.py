@@ -119,15 +119,12 @@ def get_ip_image():
     # Create canvas (dark background)
     img = Image.new("RGB", (320, 80), color=(20, 24, 33))
     draw = ImageDraw.Draw(img)
-    
-    # Load default font
     font = ImageFont.load_default()
     
     # Draw label and IP text
     draw.text((15, 15), "Client IP Address:", fill=(110, 120, 140), font=font)
     draw.text((15, 40), ip, fill=(74, 222, 128), font=font)
     
-    # Save image to an in-memory byte buffer
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
@@ -156,15 +153,14 @@ def get_time_image():
 def get_identicon_image():
     """Generates a unique, symmetric grid avatar based on the client's IP."""
     ip = get_client_ip() or "127.0.0.1"
-    # Create a persistent hash based on the IP address
     ip_hash = hashlib.md5(ip.encode("utf-8")).hexdigest()
     
-    # Extract colors from the hash (first 6 characters)
+    # Extract colors from the hash
     r = int(ip_hash[0:2], 16)
     g = int(ip_hash[2:4], 16)
     b = int(ip_hash[4:6], 16)
     fg_color = (r, g, b)
-    bg_color = (243, 244, 246) # Light grey background
+    bg_color = (243, 244, 246)
     
     grid_size = 5
     block_size = 24
@@ -174,12 +170,9 @@ def get_identicon_image():
     img = Image.new("RGB", (img_width, img_width), color=bg_color)
     draw = ImageDraw.Draw(img)
     
-    # Iterate through a 5x5 grid, mirroring columns for symmetry
     for col in range(grid_size):
-        # Columns 0, 1, 2 are unique; 3 mirrors 1; 4 mirrors 0
         source_col = col if col < 3 else 4 - col
         for row in range(grid_size):
-            # Pick a bit from the hash to decide if block should be filled
             bit_index = source_col * grid_size + row
             byte_index = bit_index // 4
             bit_shift = (bit_index % 4) * 2
@@ -277,9 +270,24 @@ def run_flask():
 
 if __name__ == "__main__":
     # 1. Start Flask in the background
-    print("Starting Flask background thread on port 5000...")
-    threading.Thread(target=run_flask, daemon=True).start()
+    print("Starting Flask background thread on port 5000...", flush=True)
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
 
-    # 2. Start MCP in the main thread (stdio)
-    print("Starting MCP Server (stdio mode)...")
-    mcp.run(transport="stdio")
+    # Give Flask a brief moment to establish its socket
+    time.sleep(0.5)
+
+    # 2. Start MCP Server in stdio mode
+    print("Starting MCP Server (stdio mode)...", flush=True)
+    try:
+        mcp.run(transport="stdio")
+    except Exception as e:
+        print(f"MCP Server failed or was interrupted: {e}", flush=True)
+
+    # 3. Prevent the main thread from exiting if the stdio stream terminates
+    print("MCP Server run-loop finished. Keeping main thread alive for Flask...", flush=True)
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Stopping WebHub Server...", flush=True)
