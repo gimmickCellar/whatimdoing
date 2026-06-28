@@ -6,11 +6,19 @@ import asyncio
 import threading
 import mimetypes
 import requests
+import io
+from datetime import datetime
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from google import genai
 import websockets
 from mcp.server.fastmcp import FastMCP
+
+# Try to import Pillow elements, fallback safe check
+try:
+    from PIL import Image, ImageDraw, ImageFont
+except ImportError:
+    raise ImportError("The Pillow library is required. Install it using 'pip install Pillow'.")
 
 # --- CONFIGURATION ---
 KNOWN_HASH = "081390df21e1d49e0af02bf37ff289e7385450db0fadbf7dd937720027759d68"
@@ -93,6 +101,102 @@ def ask_gemini(prompt: str) -> str:
     """Ask the Gemini AI model a question using the configured API key."""
     response = genai_client.models.generate_content(model=DEFAULT_MODEL, contents=prompt)
     return response.text
+
+# --- DYNAMIC IMAGE ROUTE HANDLERS ---
+
+def get_client_ip():
+    """Helper to retrieve the remote client's IP, handling reverse proxies."""
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr)
+    if ip and "," in ip:
+        ip = ip.split(",")[0].strip()
+    return ip
+
+@app.route("/images/ip.png")
+def get_ip_image():
+    """Generates a dynamic image showing the client's current IP address."""
+    ip = get_client_ip() or "Unknown IP"
+    
+    # Create canvas (dark background)
+    img = Image.new("RGB", (320, 80), color=(20, 24, 33))
+    draw = ImageDraw.Draw(img)
+    
+    # Load default font
+    font = ImageFont.load_default()
+    
+    # Draw label and IP text
+    draw.text((15, 15), "Client IP Address:", fill=(110, 120, 140), font=font)
+    draw.text((15, 40), ip, fill=(74, 222, 128), font=font)
+    
+    # Save image to an in-memory byte buffer
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    
+    return Response(buf.getvalue(), mimetype="image/png")
+
+@app.route("/images/time.png")
+def get_time_image():
+    """Generates a dynamic image displaying the server's current UTC time."""
+    current_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    
+    img = Image.new("RGB", (320, 80), color=(31, 41, 55))
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.load_default()
+    
+    draw.text((15, 15), "Current Server Time:", fill=(156, 163, 175), font=font)
+    draw.text((15, 40), current_time, fill=(251, 191, 36), font=font)
+    
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    
+    return Response(buf.getvalue(), mimetype="image/png")
+
+@app.route("/images/identicon.png")
+def get_identicon_image():
+    """Generates a unique, symmetric grid avatar based on the client's IP."""
+    ip = get_client_ip() or "127.0.0.1"
+    # Create a persistent hash based on the IP address
+    ip_hash = hashlib.md5(ip.encode("utf-8")).hexdigest()
+    
+    # Extract colors from the hash (first 6 characters)
+    r = int(ip_hash[0:2], 16)
+    g = int(ip_hash[2:4], 16)
+    b = int(ip_hash[4:6], 16)
+    fg_color = (r, g, b)
+    bg_color = (243, 244, 246) # Light grey background
+    
+    grid_size = 5
+    block_size = 24
+    padding = 12
+    img_width = grid_size * block_size + padding * 2
+    
+    img = Image.new("RGB", (img_width, img_width), color=bg_color)
+    draw = ImageDraw.Draw(img)
+    
+    # Iterate through a 5x5 grid, mirroring columns for symmetry
+    for col in range(grid_size):
+        # Columns 0, 1, 2 are unique; 3 mirrors 1; 4 mirrors 0
+        source_col = col if col < 3 else 4 - col
+        for row in range(grid_size):
+            # Pick a bit from the hash to decide if block should be filled
+            bit_index = source_col * grid_size + row
+            byte_index = bit_index // 4
+            bit_shift = (bit_index % 4) * 2
+            is_filled = (int(ip_hash[byte_index], 16) >> bit_shift) & 1
+            
+            if is_filled:
+                x1 = padding + col * block_size
+                y1 = padding + row * block_size
+                x2 = x1 + block_size
+                y2 = y1 + block_size
+                draw.rectangle([x1, y1, x2, y2], fill=fg_color)
+                
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    
+    return Response(buf.getvalue(), mimetype="image/png")
 
 # --- FLASK ROUTES (Your Original App) ---
 
@@ -177,6 +281,5 @@ if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
 
     # 2. Start MCP in the main thread (stdio)
-    # This allows Claude Desktop to communicate via stdin/stdout
     print("Starting MCP Server (stdio mode)...")
     mcp.run(transport="stdio")
